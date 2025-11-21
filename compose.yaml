@@ -1,0 +1,11 @@
+services:
+  arm_ros:
+    build:
+      context: ./testing
+    container_name: arm_ros
+    ports:
+      - 3030:3030
+    platform: linux/arm64/v8
+    stdin_open: true
+    tty: true
+    privileged: true
