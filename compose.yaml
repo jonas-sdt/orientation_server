@@ -1,10 +1,11 @@
 services:
-  arm_ros:
+  ros_moto:
     build:
       context: ./testing
     container_name: ros_moto
-    ports:
-      - 3030:3030
+    platform: linux/arm64
+    # ports:
+    #   - 3030:3030
     stdin_open: true
     tty: true
     privileged: true
@@ -15,3 +16,4 @@ services:
       - ROS_PYTHON_VERSION=3
       - ROS_DISTRO=humble
     network_mode: host
+    entrypoint: ['/bin/bash', '-c', 'source /opt/ros/humble/setup.bash && python3 /orientation_server/testing/test_pub.py']
