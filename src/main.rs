@@ -2,18 +2,17 @@ use clap::Parser;
 use futures::StreamExt;
 
 #[allow(unused_imports)]
-use log::{debug, info};
+use log::{debug, info, warn, error};
 use r2r::QosProfile;
 use serde::{Deserialize, Serialize};
 use std::{
     f64::consts::PI,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddrV4}
 };
-use tokio::sync::{OnceCell, RwLock};
+use tokio::{sync::{OnceCell, RwLock}};
 use warp::Filter;
 
 static CLI_ARGS: OnceCell<CliArgs> = OnceCell::const_new();
-static LOGGER_NAME: OnceCell<String> = OnceCell::const_new();
 
 static NUM: RwLock<Option<EventStructData>> = RwLock::const_new(None);
 
@@ -32,7 +31,7 @@ struct EventStructData {
     level: String,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     colog::init();
 
@@ -41,20 +40,23 @@ async fn main() {
 
     info!("Configuration: {:#?}", args);
 
+    info!("Starting ROS Node");
+    // Set up ROS2 node inside the task
+    let ctx = r2r::Context::create().unwrap();
+    let mut node = r2r::Node::create(ctx.clone(), "web_server", "").unwrap();
+
+    let subscription = node
+        .subscribe::<r2r::sensor_msgs::msg::Imu>("/imu/imu", QosProfile::default())
+        .unwrap();
+
+
+    r2r::log_info!(node.logger(), "Initialized");
+    info!("ROS Node Initialized");
+
     // Spawn a Tokio task (this is `Send` because it lives on the Tokio runtime)
-    tokio::spawn(async move {
-        // Set up ROS2 node inside the task
-        let ctx = r2r::Context::create().unwrap();
-        let mut node = r2r::Node::create(ctx.clone(), "web_server", "").unwrap();
-        LOGGER_NAME.set(node.logger().to_string()).unwrap();
-
-        let mut subscription = node
-            .subscribe::<r2r::sensor_msgs::msg::Imu>("/imu/imu", QosProfile::default())
-            .unwrap();
-
-        r2r::log_info!(node.logger(), "Initialized");
-
-        while let Some(msg) = subscription.next().await {
+    let join_handle = tokio::spawn(async move {
+        subscription.for_each_concurrent(1, async |msg| {
+            info!("value");
             // Convert quaternion z → angle (example, adjust as needed)
             let angle = msg.orientation.z;
             let angle_deg = angle / 180.0 * PI;
@@ -62,9 +64,13 @@ async fn main() {
                 level: format!("Pitch = {}°", (args.target_angle - angle_deg)),
             };
             let mut guard = NUM.write().await;
+            info!("got write guard");
             *guard = Some(data);
-        }
+        }).await;
+        error!("ROS Node Stopped");
     });
+
+    node.spin_once(std::time::Duration::from_millis(100));
 
     // ---------- CORS ----------
     let cors = warp::cors()
@@ -95,5 +101,9 @@ async fn main() {
     let route = sse_route.with(cors);
 
     // ---------- Run the server ----------
-    warp::serve(route).run(CLI_ARGS.get().unwrap().socket).await;
+    tokio::spawn(warp::serve(route).run(CLI_ARGS.get().unwrap().socket));
+
+    loop {
+        node.spin_once(std::time::Duration::from_millis(100));        
+    }
 }
