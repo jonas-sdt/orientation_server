@@ -1,5 +1,5 @@
 use clap::Parser;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, executor::LocalPool, task::LocalSpawnExt};
 use log::{debug, info};
 use r2r::{Node, QosProfile, log_info};
 use serde::{Deserialize, Serialize};
@@ -108,12 +108,14 @@ async fn main() {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 
-    spawner.spawn_local(async move {
-        // Start the warp server
-        warp::serve(route)
-            .run(CLI_ARGS.get().unwrap().socket) // Listen on localhost:3030
-            .await;
-    })?;
+    spawner
+        .spawn_local(async move {
+            // Start the warp server
+            warp::serve(route)
+                .run(CLI_ARGS.get().unwrap().socket) // Listen on localhost:3030
+                .await;
+        })
+        .unwrap();
 
-    spawner.spawn_local(async move {})?;
+    spawner.spawn_local(async move {}).unwrap();
 }
